@@ -1,0 +1,347 @@
+---
+title: "mos_w3"
+author: "Jingsong Zhou"
+date: "2023-07-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# read the dataset
+dataset <- read.table("my_agam_aging_expr_timeseries_Jun23_2023.tsv", header = TRUE)
+```
+
+
+### 1. Variance Analysis of Single Gene Expression over Time
+
+In this analysis, we investigate whether there is evidence of variance in the expression of a single gene increasing with time. We iterate over a selected set of geneIDs and compute the variance of gene expression for each age group. This analysis helps us understand if the regulatory robustness of gene expression changes with age, which has implications for evolutionary perspectives on gene regulation.
+
+```{r}
+# Get unique geneIDs from the dataset
+geneIDs <- unique(dataset$geneID)
+
+# Split the dataset by geneID
+gene_data_list <- split(dataset, dataset$geneID)
+```
+
+The goal of this analysis is to determine whether there is evidence of variance in the expression of a single gene increasing or decreasing with time. By examining the variance of gene expression at different ages and fitting a linear regression model, we can assess the significance of the age coefficient and determine if there is a positive/negative trend in variance over time.
+
+```{r}
+# Initialize the variables to count genes with changing trend
+genes_with_increasing_variance <- 0
+genes_with_decreasing_variance <- 0
+increasing_trend_age_genes<-c()
+decreasing_trend_age_genes<-c()
+
+# Initialize an empty vector to store the coefficients
+coefficients_vector <- c()
+
+# Iterate over the gene IDs
+for (i in 1:length(geneIDs)) {
+  gene <- geneIDs[i]
+  
+  # Subset the dataset for the specific geneID
+  gene_data <- gene_data_list[[as.character(gene)]]
+  
+  # Compute the variance of gene expression for each age
+  variance_by_age <- aggregate(transcription ~ age, data = gene_data, FUN = var)
+  
+  # Fit a linear regression model
+  lm_model <- lm(variance_by_age$transcription ~ variance_by_age$age)
+  
+  # Check the significance of the age coefficient
+  p_value <- summary(lm_model)$coefficients[2, 4]
+
+  # Check the sign of the age coefficient
+  coefficient <- summary(lm_model)$coefficients[2, 1]
+  
+  # Store the coefficient in the vector
+  coefficients_vector <- c(coefficients_vector, coefficient)  
+  
+  # Make a conclusion based on the p-value and coefficient sign
+  if (p_value < 0.05 & coefficient > 0) {
+    # There is significant evidence of increasing variance over ages
+    genes_with_increasing_variance <- genes_with_increasing_variance + 1
+    increasing_trend_age_genes<-c(increasing_trend_age_genes, gene)
+  }
+  else if (p_value < 0.05 & coefficient < 0) {
+    # There is significant evidence of decreasing variance over ages
+    genes_with_decreasing_variance <- genes_with_decreasing_variance + 1
+    decreasing_trend_age_genes<-c(decreasing_trend_age_genes, gene)
+  }
+}
+# Calculate the proportion of genes with increasing variance
+proportion_increasing_variance <- genes_with_increasing_variance / length(geneIDs)
+# Calculate the proportion of genes with decreasing variance
+proportion_decreasing_variance <- genes_with_decreasing_variance / length(geneIDs)
+
+# Print the summary result
+cat("Proportion of genes with increasing variance over time:", proportion_increasing_variance, "\n")
+cat("Proportion of genes with decreasing variance over time:", proportion_decreasing_variance, "\n")
+```
+
+The code below generates a histogram to visualize the distribution of coefficients. The coefficients represent the relationship between age and gene expression variance for each gene. By examining the distribution, we can gain insights into the overall pattern and variability of the coefficients. This information helps us understand the extent to which gene expression variance changes with age.
+
+```{r}
+# Plot the distribution of coefficients
+hist(coefficients_vector, main = "Distribution of Coefficients",
+     xlab = "Coefficient", ylab = "Proportion", freq = FALSE)
+```
+
+The code creates a quantile-quantile (QQ) plot to assess the normality of the coefficients. The QQ plot compares the observed distribution of coefficients against the expected distribution under normality. If the points on the plot roughly align with the diagonal line (qqline), it suggests that the coefficients follow a normal distribution. Departures from the diagonal line indicate deviations from normality, which can be important for statistical analyses that assume normality.
+
+```{r}
+# Create a quantile-quantile (QQ) plot
+qqnorm(coefficients_vector)
+qqline(coefficients_vector)
+```
+
+This section performs bootstrap resampling to estimate the uncertainty associated with a symmetry measure of the coefficients. The symmetry measure, in this case, is the mean of the bootstrap samples. We use Bootstrap method to resample the coefficients with replacement, calculate the mean of each bootstrap sample, and store it in the bootstrap_samples vector. The resulting vector represents a distribution of bootstrap symmetry measures. The confidence interval for the symmetry measure is then computed using the quantile function, specifying the desired percentiles. Finally, the confidence interval is printed to provide an estimate of the uncertainty surrounding the symmetry measure of the coefficients.
+
+```{r}
+# Set the number of bootstrap iterations
+num_iterations <- 1000
+
+# Initialize an empty vector to store bootstrap samples
+bootstrap_samples <- numeric(num_iterations)
+
+# Perform bootstrapping
+for (i in 1:num_iterations) {
+  # Resample the coefficients with replacement
+  bootstrap_sample <- sample(coefficients_vector, replace = TRUE)
+  
+  # Calculate the symmetry measure (mean) of the bootstrap sample
+  bootstrap_symmetry <- mean(bootstrap_sample)  # Replace with the symmetry measure
+  
+  # Store the symmetry measure in the bootstrap_samples vector
+  bootstrap_samples[i] <- bootstrap_symmetry
+}
+
+# Calculate the confidence interval for the symmetry measure
+confidence_interval <- quantile(bootstrap_samples, c(0.025, 0.975))
+
+# Print the confidence interval
+cat("Bootstrap Confidence Interval:", confidence_interval, "\n")
+```
+
+For a more intuitive understanding, we use visualization methods for genes with increasing or decreasing trend in gene expression variance to observe the change in variance with age.
+
+```{r}
+# Set the maximum number of iterations
+max_iterations <- 9  
+
+# Set the number of rows and columns for the grid
+num_rows <- 3
+num_cols <- 3
+# Create a new blank plot
+plot.new()
+# Set up the grid layout
+par(mfrow = c(num_rows, num_cols), mar = c(4, 4, 2, 2))
+
+for (i in 1:max_iterations) {
+  gene <- increasing_trend_age_genes[i]
+  
+  # Subset the dataset for the specific geneID
+  gene_data <- gene_data_list[[as.character(gene)]]
+  
+  # Compute the variance of gene expression for each age
+  variance_by_age <- aggregate(transcription ~ age, data = gene_data, FUN = var)
+  
+  # Plot the variance by age
+  plot(variance_by_age$age, variance_by_age$transcription, type = "b", 
+       xlab = "Age", ylab = "Expression Variance",
+       main = paste0("Gene ID:", gene))
+}
+
+# Reset the plot layout
+par(mfrow = c(1, 1))
+```
+
+
+```{r}
+# Set the maximum number of iterations
+max_iterations <- 9  
+
+# Set the number of rows and columns for the grid
+num_rows <- 3
+num_cols <- 3
+# Create a new blank plot
+plot.new()
+# Set up the grid layout
+par(mfrow = c(num_rows, num_cols), mar = c(4, 4, 2, 2))
+
+for (i in 1:max_iterations) {
+  gene <- decreasing_trend_age_genes[i]
+  
+  # Subset the dataset for the specific geneID
+  gene_data <- gene_data_list[[as.character(gene)]]
+  
+  # Compute the variance of gene expression for each age
+  variance_by_age <- aggregate(transcription ~ age, data = gene_data, FUN = var)
+  
+  # Plot the variance by age
+  plot(variance_by_age$age, variance_by_age$transcription, type = "b", 
+       xlab = "Age", ylab = "Gene Expression Variance",
+       main = paste0("Gene ID:", gene))
+}
+
+# Reset the plot layout
+par(mfrow = c(1, 1))
+```
+
+### 2. Correlation Analysis of Gene Expression between Different Genes over Time
+
+The code analyzes the correlation between two selected genes over different ages. It subsets the dataset to extract the gene data, calculates the correlation coefficient for each age, and plots the correlation coefficients over time. This analysis helps to understand how the correlation between the genes changes with age, providing insights into gene interactions and potential biological processes related to aging or development.
+
+```{r}
+correlation_genes_over_ages <- function(selected_gene1,selected_gene2){ #This function computes the correlation for the chosen genes pair over ages and return a vector containing the correlation
+  
+  # Subset the dataset for the selected genes
+  selected_gene1_data <- gene_data_list[[as.character(selected_gene1)]]
+  selected_gene2_data <- gene_data_list[[as.character(selected_gene2)]]
+  
+  # Initialize vectors to store correlation coefficients and ages
+  correlation_coefficients <- c()
+  
+  # Iterate over unique ages
+  for (i in unique(dataset$age)) {
+    # Subset the data for the current age
+    subset_gene1_data <- subset(selected_gene1_data, age == i)
+    subset_gene2_data <- subset(selected_gene2_data, age == i)
+    
+    # Check if there are multiple measurements for the same experimentID
+    if (length(unique(dataset$experimentID)) != nrow(selected_gene1_data)) {
+      # Calculate the average transcription value for each experimentID
+      subset_gene1_data <- aggregate(transcription ~ experimentID, data = subset_gene1_data, FUN = mean)
+    }
+    if (length(unique(dataset$experimentID)) != nrow(selected_gene2_data)) {
+      # Calculate the average transcription value for each experimentID
+      subset_gene2_data <- aggregate(transcription ~ experimentID, data = subset_gene2_data, FUN = mean)
+    }
+    
+    # Merge the data based on experimentID
+    merged_data <- merge(subset_gene1_data, subset_gene2_data, by = "experimentID")
+    
+    # Extract the gene1 and gene2 data for the current age
+    gene1_data <- merged_data$transcription.x
+    gene2_data <- merged_data$transcription.y
+
+    # Calculate the correlation coefficient
+    correlation <- cor(gene1_data, gene2_data)
+    
+    # Store the correlation coefficient and age
+    correlation_coefficients <- c(correlation_coefficients, correlation)
+  }
+  return(correlation_coefficients)
+}
+```
+
+The code performs a correlation analysis between randomly selected pairs of genes over different ages. The resulting plots provide insights into the variability and patterns of gene-gene correlations across different gene pairs.
+
+```{r}
+# Set the maximum number of iterations
+max_iterations <- 9  
+
+# Set the number of rows and columns for the grid
+num_rows <- 3
+num_cols <- 3
+# Create a new blank plot
+plot.new()
+# Set up the grid layout
+par(mfrow = c(num_rows, num_cols), mar = c(4, 4, 2, 2))
+
+for (i in 1:max_iterations) {
+  # Randomly select a pair of genes for correlation analysis
+  random_genes <- sample(geneIDs, size = 2)  # we can adjust the size as desired
+  # Compute the correlation
+  correlation_coefficients <- correlation_genes_over_ages(random_genes[1],random_genes[2])
+  # Plot the correlation coefficients over ages
+  plot(unique(dataset$age), correlation_coefficients,type = 'b', pch = 19, xlab = "Age", ylab = "Correlation Coefficient", main = "Correlation Coefficient over Ages")
+}
+
+# Reset the plot layout
+par(mfrow = c(1, 1))
+```
+
+The goal of this analysis is to determine whether there is evidence of correlation between the expression of two genes increasing or decreasing with time. By examining the correlation of gene expression at different ages and fitting a linear regression model, we can assess the significance of the age coefficient and determine if there is a positive/negative trend in correlation over time.
+
+In the below code, we randomly select gene pairs and calculate the correlation between their expression over age. We then fit a linear regression model to determine the trend based on the slope of the regression line. Gene pairs with positive slopes indicate increasing trends, while gene pairs with negative slopes indicate decreasing trends. The gene pairs with increasing and decreasing trends are stored in separate vectors.
+
+```{r}
+# Initialize the variables to count genes with changing trend
+genes_with_increasing_correlation <- 0
+genes_with_decreasing_correlation <- 0
+ages <- unique(dataset$age)
+
+# Initialize an empty vector to store the coefficients
+cor_coefficients_vector <- c()
+
+# Set the maximum number of iterations
+max_iterations <- 200
+
+for (i in 1:max_iterations) {
+  
+    # Randomly select a pair of genes for correlation analysis
+    random_genes <- sample(geneIDs, size = 2)
+    
+    # Compute the correlation of gene expression for each age
+    correlation_coefficients <- correlation_genes_over_ages(random_genes[1],random_genes[2])  
+  
+    # Fit a linear regression model
+    lm_model <- lm(correlation_coefficients ~ ages)
+
+    # Check the significance of the age coefficient
+    p_value <- summary(lm_model)$coefficients[2, 4]
+
+    # Check the sign of the age coefficient
+    coefficient <- summary(lm_model)$coefficients[2, 1]
+  
+    # Store the coefficient in the vector
+    cor_coefficients_vector <- c(cor_coefficients_vector, coefficient)  
+  
+    # Make a conclusion based on the p-value and coefficient sign
+    if (p_value < 0.1 & coefficient > 0) {
+      # There is significant evidence of increasing correlation over ages
+     genes_with_increasing_correlation <- genes_with_increasing_correlation + 1
+    }
+    else if (p_value < 0.1 & coefficient < 0) {
+     # There is significant evidence of decreasing correlation over ages
+     genes_with_decreasing_correlation <- genes_with_decreasing_correlation + 1
+    }
+}
+
+# Calculate the proportion of genes with increasing correlation
+proportion_increasing_correlation <- genes_with_increasing_correlation / max_iterations
+
+# Calculate the proportion of genes with decreasing variance
+proportion_decreasing_correlation <- genes_with_decreasing_correlation / max_iterations
+
+# Print the summary result
+cat("Proportion of genes with increasing correlation over time:", proportion_increasing_correlation, "\n")
+cat("Proportion of genes with decreasing correlation over time:", proportion_decreasing_correlation, "\n")
+
+# Plot the distribution of coefficients
+hist(coefficients_vector, main = "Distribution of Coefficients",
+     xlab = "Coefficient", ylab = "Proportion", freq = FALSE)
+```
+
+
+
+
+```{r}
+# Create a quantile-quantile (QQ) plot
+qqnorm(coefficients_vector)
+qqline(coefficients_vector)
+```
+
+
+
+
+
+
+
+
+
