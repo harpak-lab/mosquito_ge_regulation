@@ -1,0 +1,203 @@
+---
+title: "5th_inference_update"
+author: "Jingsong Zhou"
+date: "2023-09-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(dplyr)
+# read the dataset
+dataset <- read.table("my_agam_aging_expr_timeseries_Jun23_2023.tsv", header = TRUE)
+```
+
+Here's a dataset generated and downloaded from the [Vectorbase](https://vectorbase.org/vectorbase/app/search?q=Anopheles%20gambiae%20PEST&documentType=gene&organisms=Anopheles%20gambiae%20PEST), which can provide us information about the genes' function and help us explore more about the expression pattern. 
+
+```{r}
+gene_function_df <- read.csv("GenesByText_Summary.csv")
+head(gene_function_df)
+```
+
+According to the description in the website, the columns of the dataset refer to various aspects of gene descriptions and annotations:
+
+1. **Transcript Product Description:** This typically refers to the description of a transcript, which is a specific RNA molecule produced from a gene. The "Transcript Product Description" provides information about the features of a transcript, such as its start and end points, coding regions, untranslated regions, splice variants, and functional information. It helps researchers understand the role of a particular RNA transcript.
+
+2. **Product Description:** In the context of gene annotation, the "Product Description" generally refers to a description of the protein product that a gene codes for. It includes information about the protein's function, domains, motifs, and any other relevant details. The "Product Description" is important for understanding the biological role of the gene and the protein it produces.
+
+3. **Gene Type:** Gene Type here refers to the classification or categorization of genes based on their characteristics and functions. Gene type provides information about the role or category of a specific gene within the genome. 
+
+In this dataset, we have three types of Gene Type: Protein-Coding Genes, Non-Coding RNA Genes, and Pseudogenes. Protein-Coding Genes are genes that encode proteins. They are transcribed into messenger RNA (mRNA) and subsequently translated into a functional protein. Protein-coding genes are often associated with specific functions in the cell or organism. Non-Coding RNA Genes do not code for proteins but instead produce functional RNA molecules. This category includes various types of non-coding RNAs, such as ribosomal RNA (rRNA), transfer RNA (tRNA), small nuclear RNA (snRNA), microRNA (miRNA), long non-coding RNA (lncRNA), and others. Pseudogenes are gene-like sequences that have lost their ability to produce functional proteins due to mutations or other factors. They are often considered non-functional remnants of once-active genes.
+
+
+**Gene expression changes over age**
+
+```{r}
+# Group the mean_expression by geneID
+expression_mean_model <- dataset %>%
+  group_by(geneID) %>%
+  do(mod = lm(transcription ~ age + factor(strainID), data = .))
+
+# Extract coefficients, p-values, and confidence intervals
+expression_mean_results <- expression_mean_model %>%
+  mutate(
+    alpha_gene = coef(mod)[1],                          # Intercept for each gene
+    beta_age = coef(mod)[2],                            # Coefficient for age for each gene
+    beta_age_p = summary(mod)$coefficients[2, 4],       # P-value for the coefficient of age for each gene
+    beta_age_ci_lower = confint(mod, "age")[1],         # Lower bound of confidence interval for beta_age
+    beta_age_ci_upper = confint(mod, "age")[2]          # Upper bound of confidence interval for beta_age
+  ) %>%
+  select(geneID, alpha_gene, beta_age, beta_age_p, beta_age_ci_lower, beta_age_ci_upper)
+```
+
+```{r}
+# Filter genes with increasing expression (positive beta_age)
+increasing_genes <- (expression_mean_results %>%
+  filter(beta_age_ci_lower > 0))$geneID
+increasing_genes <- gene_function_df %>%
+  filter(Gene.ID %in% increasing_genes) %>%
+  select(Gene.ID, Product.Description)
+
+# Filter genes with decreasing expression (negative beta_age)
+decreasing_genes <- (expression_mean_results %>%
+  filter(beta_age_ci_upper < 0))$geneID
+decreasing_genes <- gene_function_df %>%
+  filter(Gene.ID %in% decreasing_genes) %>%
+  select(Gene.ID, Product.Description)
+```
+
+Next, we want to explore the gene's function in our interesting subsets ("increasing_genes" and "decreasing_genes") using "gene_function_df". The first thing we find is almost all of the genes with significant changes over age are Protein-coding genes. Specifically, only 2 genes are Pseudogenes among 4341 genes with increasing expression, and all 4341 genes with decreasing expression are Protein-coding genes. 
+
+```{r}
+library(ggplot2)
+
+# Remove numbers at the end of Product.Description and group by modified Product.Description
+increasing_genes$Modified_Product.Description <- gsub(" [0-9]+$", "", increasing_genes$Product.Description)
+decreasing_genes$Modified_Product.Description <- gsub(" [0-9]+$", "", decreasing_genes$Product.Description)
+
+# Group the data by the modified Product.Description
+grouped_increasing_genes <- increasing_genes %>%
+  group_by(Modified_Product.Description) %>%
+  summarize(Count = n())
+grouped_decreasing_genes <- decreasing_genes %>%
+  group_by(Modified_Product.Description) %>%
+  summarize(Count = n())
+
+```
+
+
+```{r}
+# Plot for increasing genes
+ggplot(subset(grouped_increasing_genes, Count > 6 & Modified_Product.Description != "unspecified product"), aes(x = Modified_Product.Description, y = Count)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Distribution of Gene Functions in Increasing Genes") +
+  xlab("Product Description") +
+  ylab("Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  annotate("text", x = 7, y = 70, label = "There are also 1928 genes with unspecified product", vjust = -0.5, color = "black")
+
+# Plot for decreasing genes
+ggplot(subset(grouped_decreasing_genes, Count > 6 & Modified_Product.Description != "unspecified product"), aes(x = Modified_Product.Description, y = Count)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Distribution of Gene Functions in Decreasing Genes") +
+  xlab("Product Description") +
+  ylab("Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  annotate("text", x = 17, y = 15, label = "There are also 1284 genes with unspecified product", vjust = -0.5, color = "black")
+```
+
+
+**Gene expression changes in variance over age**
+
+```{r}
+# Group by age and geneID and estimate the variance of gene expression
+variance_gene <- dataset %>%
+  group_by(age, geneID, strainID) %>%
+  summarize(variance_expression = var(transcription))
+
+#'variance_gene' is the dataframe with columns: age, geneID, variance_expression
+variance_gene_model <- variance_gene %>%
+  group_by(geneID) %>%
+  do(mod = lm(variance_expression ~ age + factor(strainID), data = .))
+
+# Extract alpha_j (intercept), beta_age_var_j (slope), and p-value coefficients
+variance_model_result <- variance_gene_model %>%
+  mutate(
+    alpha_gene = coef(mod)[1],                          # Intercept for each gene
+    beta_age = coef(mod)[2],                            # Coefficient for age for each gene
+    beta_age_p = summary(mod)$coefficients[2, 4],       # P-value for the coefficient of age for each gene
+    beta_age_ci_lower = confint(mod, "age")[1],         # Lower bound of confidence interval for beta_age
+    beta_age_ci_upper = confint(mod, "age")[2]          # Upper bound of confidence interval for beta_age
+  ) %>%
+  select(geneID, alpha_gene, beta_age, beta_age_p, beta_age_ci_lower, beta_age_ci_upper)
+```
+
+```{r}
+# Filter genes with increasing expression in variance(positive beta_age)
+increasing_var_genes <- (variance_model_result %>%
+  filter(beta_age_ci_lower > 0))$geneID
+increasing_var_genes <- gene_function_df %>%
+  filter(Gene.ID %in% increasing_var_genes) %>%
+  select(Gene.ID, Product.Description)
+
+# Filter genes with decreasing expression in variance(negative beta_age)
+decreasing_var_genes <- (variance_model_result %>%
+  filter(beta_age_ci_upper < 0))$geneID
+decreasing_var_genes <- gene_function_df %>%
+  filter(Gene.ID %in% decreasing_var_genes) %>%
+  select(Gene.ID, Product.Description)
+```
+
+Next, we want to explore the gene's function in our interesting subsets ("increasing_var_genes" and "decreasing_var_genes") using "gene_function_df".
+
+```{r}
+library(ggplot2)
+
+# Remove numbers at the end of Product.Description and group by modified Product.Description
+increasing_var_genes$Modified_Product.Description <- gsub(" [0-9]+$", "", increasing_var_genes$Product.Description)
+decreasing_var_genes$Modified_Product.Description <- gsub(" [0-9]+$", "", decreasing_var_genes$Product.Description)
+
+# Group the data by the modified Product.Description
+grouped_increasing_var_genes <- increasing_var_genes %>%
+  group_by(Modified_Product.Description) %>%
+  summarize(Count = n())
+grouped_decreasing_var_genes <- decreasing_var_genes %>%
+  group_by(Modified_Product.Description) %>%
+  summarize(Count = n())
+
+```
+
+
+```{r}
+# Plot for increasing genes
+ggplot(subset(grouped_increasing_var_genes, Count > 2 & Modified_Product.Description != "unspecified product"), aes(x = Modified_Product.Description, y = Count)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Distribution of Gene Functions in Increasing Variance Genes") +
+  xlab("Product Description") +
+  ylab("Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  annotate("text", x = 4, y = 4, label = "There are also 64 genes with unspecified product", vjust = -0.5, color = "black")
+
+# Plot for decreasing genes
+ggplot(subset(grouped_decreasing_var_genes, Count > 2 & Modified_Product.Description != "unspecified product"), aes(x = Modified_Product.Description, y = Count)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  labs(title = "Distribution of Gene Functions in Decreasing Variance Genes") +
+  xlab("Product Description") +
+  ylab("Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  annotate("text", x = 10, y = 6, label = "There are also 254 genes with unspecified product", vjust = -0.5, color = "black")
+```
+
+
+In summary, the plots we've created provide information for understanding the distribution of gene functions in different subsets of genes.Further, I plan to explore the subset of genes (e.g, genes with increasing variance), especially those whose functions have a high count in the analysis. Also investigate whether genes are associated with specific biological processes, pathways, or functions.
+
+**Notations about the fitting process:**
+
+Specially, here I'd like to explain why we separate subsets and fit the model for each gene. The model contains only gene-specific effects, we should be able to obtain the same result whether we fit the model after subsetting for a specific gene or fit the model using the entire dataset. In this scenario, the model parameters (coefficients) are specific to each gene, and they are estimated independently of each other. Whether we subset the dataset for a specific gene or use the entire dataset, the estimation process for that specific gene's model remains the same. Considering the uncertainty of estimates, since the effect of age and strains in our models are gene-specific, the number of data points used to estimate some coefficient doesn't change when we fit the model to the entire dataset or fit separate models by GeneID.
+
+Also, extracting and organizing coefficients for individual genes becomes much simpler when we're working with a smaller subset of models. This facilitates further analysis, such as comparing gene-specific effects across genes or identifying significant associations. 
+
