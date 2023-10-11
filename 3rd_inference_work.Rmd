@@ -1,0 +1,266 @@
+---
+title: "3rd_inference_work"
+author: "Jingsong Zhou"
+date: "2023-09-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+**Model assumption**
+
+At the within-gene level, the model describes the distribution of gene expression vectors for each gene at different ages. This level captures the individual variation within each gene and accounts for the measurement noise and biological variability.
+
+For the i-th age, the model assumes a multivariate normal distribution for the gene expression vectors:
+
+$$
+\mathbf{y}_{i} \sim MVN(\boldsymbol{\mu}_{i}, \boldsymbol{\Sigma}_{i})
+$$
+
+- $\mathbf{y}_{ij}$ represents the gene expression vector at the i-th age, containing the expression values across all genes.
+- $\boldsymbol{\mu}_{i}$ represents the mean expression vector at i-th age.
+- $\boldsymbol{\Sigma}_{i}$ represents the variance-covariance matrix of gene expression at the i-th age.
+
+```{r}
+# read the dataset
+dataset <- read.table("my_agam_aging_expr_timeseries_Jun23_2023.tsv", header = TRUE)
+
+# Get unique geneIDs from the dataset
+geneIDs <- unique(dataset$geneID)
+
+# Get unique ages and strains from the dataset
+ages <- unique(dataset$age)
+strains <- unique(dataset$strainID)
+
+# Split the dataset by geneID
+gene_data_list <- split(dataset, dataset$geneID)
+```
+
+**Model for Means**
+
+At this level, the model captures the shared characteristics and systematic variation among genes, considering the effect of both gene-specific intercepts, strain-specific intercepts, and the change in expression mean per unit change in age.
+
+Notice that $\mu_{ij}$ is the j-th entry in the mean vector $\boldsymbol{\mu}_i$. The mean expression value $\mu_{ij}$ for gene j at the i-th age and strains is modeled as:
+
+$$
+\mu_{ij} = \alpha_{mean,j} + \beta_{age,j} \cdot \text{age}_i + \sum_{k=1}^{N_{\text{strain}}}\alpha_{j,\text{strain_k}} \cdot \boldsymbol{1_{\text{strain_k}}}
+$$
+
+Where:
+
+- $\mu_{ij}$ is the mean expression value of the j-th gene at the i-th age.
+- $\alpha_{mean,j}$ is the intercept term, representing the overall mean expression level across ages and strains for j-th gene.
+- $\beta_{age,j}$ is the coefficient of the 'age' variable, representing the change in mean expression of j-th gene per unit change in age.
+- $N_{\text{strain}}$ is the total number of strains.
+- $\alpha_{j,\text{strain_k}}$ is the coefficients associated with the k-th strain, which represents the fixed effect of the k-th strain for j-th gene.
+- $\boldsymbol{1_{\text{strain_k}}}$ is the indicator variable for the k-th strain.
+
+```{r,warning=FALSE}
+library(dplyr)
+
+# Group by age, geneID and strainID, and calculate the mean gene expression
+mean_expression <- dataset %>%
+  group_by(age, geneID, strainID) %>%
+  summarize(mean_expression = mean(transcription))
+```
+
+Here are two different ways, one is to fit a single model for the whole dataset, another one is to fit a set of separate models for each geneID.
+
+```{r,warning=FALSE}
+# Load necessary libraries
+library(lme4)
+
+# Fit the mean model with gene-specific random intercepts for strainID
+model_means <- lmer(mean_expression ~ (1 + age | geneID) + (1 | strainID:geneID), data = mean_expression)
+
+# Run model diagnostics and check model fit
+summary(model_means)
+```
+
+```{r,eval=FALSE}
+# Load necessary libraries
+library(lme4)
+
+# Create an empty list to store individual models
+gene_specific_models <- list()
+
+# Loop through each geneID and fit a separate model
+for (geneID in geneIDs) {
+  # Subset the data for the current geneID
+  subset_data <- subset(mean_expression, geneID == geneID)
+  
+  # Fit a model for the current geneID
+  model <- lmer(mean_expression ~ age + (1 | strainID), data = subset_data)
+  
+  # Store the model in the list
+  gene_specific_models[[geneID]] <- model
+}
+
+# Now, gene_specific_models is a list of models, each indexed by geneID
+# we can access specific models by using gene_specific_models[[geneID]]
+
+```
+
+
+Notes about the formula in the code:
+
+- `(1 + age | geneID)` specifies that random intercepts for `geneID` are allowed to vary by both the intercept and age. This means each gene can have its own intercept and age effect.
+
+- `(1 | strainID:geneID)` specifies random intercepts for `strainID` nested within `geneID`, meaning that the random intercepts are unique for each gene. This accounts for the variation in mean expression related to different strains specific to each gene.
+
+**Modeling the Variance-Covariance Matrix ($\boldsymbol{\Sigma}_i$):**
+
+In this part we separate the covariance matrix into two parts: the variance diagonal matrix and the correlation coefficient matrix. For convenience, we analyze these two parts separately.
+
+$$
+\boldsymbol{\Sigma}_{i} = \text{diag}(\boldsymbol{\Delta}_{i}) \cdot \boldsymbol{\Omega}_{i}
+$$
+
+where:
+
+- $\text{diag}(\boldsymbol{\Delta}_{i})$ is a diagonal matrix with the vector $\boldsymbol{\delta}_{i}$ containing the variances of gene expression at the i-th age for each gene.
+
+- $\boldsymbol{\Omega}_{i}$ is the correlation matrix at the i-th age.
+
+**Modeling the Variance of Gene Expression ($\delta_{ij}$):**
+
+$\delta_{ij}$ represents the variance of gene expression for the j-th gene at the i-th age, which is the jj-th entry of the diagonal matrix $\text{diag}(\boldsymbol{\Delta}_{i})$. To model the variance of gene expression for each gene over age, we assume a linear relationship with age:
+
+$$
+log(\delta_{ij}) = \alpha_{var,j} + \beta_{\text{age_var_j}} \cdot \text{age}_i + \sum_{k=1}^{N_{\text{strain}}}\alpha_{var,j,\text{strain_k}} \cdot \boldsymbol{1_{\text{strain_k}}}
+$$
+
+where:
+
+- $\delta_{ij}$ represents the variance of gene expression for the j-th gene at the i-th age.
+- $\alpha_{var,j}$ represents the gene-specific intercept for the j-th gene.
+- $\beta_{\text{age_var_j}}$ represents the coefficient capturing the change in log-variance per unit change in age.
+- $N_{\text{strain}}$ is the total number of strains.
+- $\alpha_{var,j,\text{strain_k}}$ is the coefficients associated with the k-th strain, which represents the fixed effect of the k-th strain for j-th gene.
+- $\boldsymbol{1_{\text{strain_k}}}$ is the indicator variable for the k-th strain.
+
+```{r}
+# Group by age and geneID and calculate the variance of gene expression
+variance_gene <- dataset %>%
+  group_by(age, geneID, strainID) %>%
+  summarize(variance_expression = var(transcription))
+```
+
+```{r,warning=FALSE}
+# Fit the variance model with gene-specific random intercepts for strainID
+model_variances <- lmer(log(variance_expression) ~ (1 + age | geneID) + (1 | strainID:geneID), data = variance_gene)
+
+# Run model diagnostics and check model fit
+summary(model_variances)
+```
+
+**Inference about variance analysis**
+
+```{r}
+# Extract random effects for geneID (this includes the intercept and the slope relating to age)
+random_effects_geneID <- ranef(model_variances)$geneID
+
+# Extract random effects for strainID:geneID(this includes the random effect ffrom different strains)
+random_effects_strainID_geneID <- ranef(model_variances)$`strainID:geneID`
+```
+
+
+```{r}
+library(tidyr)
+# Extract the first character from row names to create the StrainID column
+random_effects_strainID_geneID$StrainID <- substr(rownames(random_effects_strainID_geneID), 1, 1)
+
+random_effects_strainID_geneID$GeneID <- sapply(strsplit(rownames(random_effects_strainID_geneID),':'),function(x) x[[2]])
+
+library(ggplot2)
+# Create a boxplot
+ggplot(data = random_effects_strainID_geneID, aes(x = StrainID, y = `(Intercept)`)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of StrainID's effect", x = "StrainID", y = "random effect across genes")
+```
+
+
+```{r}
+# Visualize random effects of age for geneID using a boxplot
+ggplot(data = random_effects_geneID, aes(y = age)) +
+  geom_boxplot() +
+  labs(title = "Distribution of Random Slopes for Age by geneID",
+       y = "Random Slope for Age")
+
+# Extract random slopes for age associated with geneID
+random_slopes_age_geneID <- random_effects_geneID$age
+
+# Analyze the distribution of random slopes
+summary(random_slopes_age_geneID)
+
+```
+
+
+
+```{r}
+# Create a data frame with geneID, age, and random slopes
+random_slopes_data <- data.frame(geneID = rownames(random_effects_geneID),
+                                 random_slope = random_slopes_age_geneID)
+
+# Calculate the Z-scores for the random slopes
+random_slopes_data$z_score <- scale(random_slopes_data$random_slope)
+
+# Define a Z-score threshold 
+threshold <- 2
+
+# Detect potential outliers based on the Z-score method
+outliers <- random_slopes_data[abs(random_slopes_data$z_score) > threshold, ]
+
+# View potential outliers
+head(outliers)
+```
+
+```{r}
+# Create a histogram for the overall distribution
+histogram <- ggplot(data = random_slopes_data, aes(x = random_slope)) +
+  geom_histogram(binwidth = 0.001, fill = "blue", alpha = 0.7) +
+  labs(title = "Histogram of Random Slopes for Age (Overall Distribution)",
+       x = "Random Slope for Age",
+       y = "Frequency")
+
+# Create a histogram for the outliers
+histogram_outliers <- ggplot(data = outliers, aes(x = random_slope)) +
+  geom_histogram(binwidth = 0.001, fill = "red", alpha = 0.7) +
+  labs(title = "Histogram for Outliers",
+       x = "Random Slope for Age",
+       y = "Frequency")
+
+# Display both histograms side by side
+library(gridExtra)
+grid.arrange(histogram, histogram_outliers, ncol = 2)
+```
+
+
+**Modeling the Correlation of Gene Expression ($\omega_{i,jk}$):**
+
+$\omega_{i,jk}$ is the jk-th entry of the correlation matrix at the i-th age $\boldsymbol{\Omega}_{i}$, which represents the correlation coefficient between the gene expression values of the j-th gene and the k-th gene at i-th age.
+
+To analyze the change of correlations over age, we can assume a linear relationship between the elements of the correlation matrix $\boldsymbol{\Omega}_{i}$ and the age variable $\text{age}_i$. Specifically, we can model the correlation coefficients $\omega_{i,jk}$ as follows:
+
+$$
+\omega_{i,jk} = \alpha_{cor,jk} + \beta_{\text{age_cor_jk}} \cdot \text{age}_i + \sum_{l=1}^{N_{\text{strain}}}\alpha_{cor,jk,\text{strain_l}} \cdot \boldsymbol{1_{\text{strain_l}}}
+$$
+
+where:
+
+- $\omega_{i,jk}$ represents the correlation coefficient between the gene expression values of the k-th gene and the k-th gene at the i-th age.
+- $\alpha_{cor,jk}$ represents the gene-pair-specific intercept for the j-th gene and k-th gene.
+- $\beta_{\text{age_cor_jk}}$ represents the coefficient capturing the change in correlation per unit change in age.
+- $N_{\text{strain}}$ is the total number of strains.
+- $\alpha_{cor,jk,\text{strain_l}}$ is the coefficients associated with the l-th strain, which represents the fixed effect of the l-th strain for the gene pair(j-th gene and k-th gene).
+- $\boldsymbol{1_{\text{strain_l}}}$ is the indicator variable for the l-th strain.
+
+
+```{r}
+
+```
+
+
