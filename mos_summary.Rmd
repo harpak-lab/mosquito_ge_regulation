@@ -1,0 +1,473 @@
+---
+title: "mos_summary"
+author: "Jingsong Zhou"
+date: "2024-01-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Project Summary: Evolution of Regulatory Robustness in Gene Expression
+
+## Introduction and Background
+
+The project aims to understand the dynamics of gene expression regulation over time and how these changes in gene expression fidelity can inform our understanding of evolutionary adaptation and related biological processes. 
+
+The dataset is microarray data including information about transcription levels of Anopheles gambiae mosquitoes. The dataset has 5 columns(variables) in total, including Transcrition Level (numerical), Age (in days), GeneID (categorical), StrainID (categorical) and ReplicateID (categorical).
+
+
+### Significance
+
+The research has significant implications in evolutionary biology, as it explores the hypothesis that gene regulation robustness decreases with age, potentially affecting an organism's overall fitness. This aspect of gene expression is crucial for understanding evolutionary adaptation and could also provide insights into health and disease mechanisms in various organisms.
+
+(Reference articles)
+
+[1] Cheng, C., Kirkpatrick, M. Molecular evolution and the decline of purifying selection with age. Nat Commun 12, 2657 (2021).
+
+[2] Yamamoto, R., Chung, R., Vazquez, J.M. et al. Tissue-specific impacts of aging and genetics on gene expression patterns in humans. Nat Commun 13, 5803 (2022).
+
+
+### Main question
+
+1. Does it make sense from an evolutionary perspective for regulatory robustness in gene expression to decrease with age?
+
+2. How does the fidelity of gene expression change over time and what implications does it have for understanding evolutionary adaptation?
+
+Quantitative Aspects:
+
+(1) Variance Change in Single Gene Expression over age: The increase in variance over age reflects a reduction in the precision of gene expression regulation.
+
+(2) Correlation Change in Gene Expression between Different Genes over age: Genes that were highly correlated in their expression become less correlated over time, suggesting a relaxation of regulatory control.
+
+### Exploratory data analysis
+
+This analysis aims to explore and identify general patterns of variance of single gene expression over time in the data. In this analysis, we investigate whether there is evidence of variance in the expression of a single gene increasing with time. We iterate over a selected set of geneIDs and compute the variance of gene expression for each age group. This analysis helps us understand if the regulatory robustness of gene expression changes with age, which has implications for evolutionary perspectives on gene regulation.
+
+```{r}
+# read the dataset
+dataset <- read.table("my_agam_aging_expr_timeseries_Jun23_2023.tsv", header = TRUE)
+
+# Get unique geneIDs from the dataset
+geneIDs <- unique(dataset$geneID)
+
+# Split the dataset by geneID
+gene_data_list <- split(dataset, dataset$geneID)
+```
+
+The goal of this analysis is to determine whether there is evidence of variance in the expression of a single gene increasing or decreasing with time. By examining the variance of gene expression at different ages and fitting a linear regression model, we can assess the significance of the age coefficient and determine if there is a positive/negative trend in variance over time.
+
+```{r}
+# Initialize the variables to count genes with changing trend
+genes_with_increasing_variance <- 0
+genes_with_decreasing_variance <- 0
+var_trend_age_genes<-c()
+
+# Initialize an empty vector to store the coefficients
+coefficients_vector <- c()
+
+# Iterate over the gene IDs
+for (i in 1:length(geneIDs)) {
+  gene <- geneIDs[i]
+  
+  # Subset the dataset for the specific geneID
+  gene_data <- gene_data_list[[as.character(gene)]]
+  
+  # Compute the variance of gene expression for each age
+  variance_by_age <- aggregate(transcription ~ age, data = gene_data, FUN = var)
+  
+  # Fit a linear regression model
+  lm_model <- lm(log(variance_by_age$transcription) ~ variance_by_age$age)
+  
+  # Check the significance of the age coefficient
+  p_value <- summary(lm_model)$coefficients[2, 4]
+
+  # Check the sign of the age coefficient
+  coefficient <- summary(lm_model)$coefficients[2, 1]
+  
+  # Store the coefficient in the vector
+  coefficients_vector <- c(coefficients_vector, coefficient)  
+  
+  # Make a conclusion based on the p-value and coefficient sign
+  if (p_value < 0.05 & coefficient > 0) {
+    # There is significant evidence of increasing variance over ages
+    genes_with_increasing_variance <- genes_with_increasing_variance + 1
+    var_trend_age_genes<-c(var_trend_age_genes, gene)
+  }
+  else if (p_value < 0.05 & coefficient < 0) {
+    # There is significant evidence of decreasing variance over ages
+    genes_with_decreasing_variance <- genes_with_decreasing_variance + 1
+  }
+}
+
+# Calculate the proportion of genes with increasing variance
+proportion_increasing_variance <- genes_with_increasing_variance / length(geneIDs)
+# Calculate the proportion of genes with decreasing variance
+proportion_decreasing_variance <- genes_with_decreasing_variance / length(geneIDs)
+```
+
+
+```{r}
+# Print the summary result
+cat("Proportion of genes with increasing variance over time:", proportion_increasing_variance, "\n")
+cat("Proportion of genes with decreasing variance over time:", proportion_decreasing_variance, "\n")
+
+# Plot the distribution of coefficients
+hist(coefficients_vector, main = "Distribution of Coefficients",
+     xlab = "Coefficient", ylab = "Frequency")
+
+# Create a quantile-quantile (QQ) plot
+qqnorm(coefficients_vector)
+qqline(coefficients_vector)
+```
+
+
+For a more intuitive understanding, we use visualization methods for genes with an increasing trend in gene expression variance to observe the change in variance with age.
+
+```{r}
+# Set the maximum number of iterations
+max_iterations <- 20  
+
+# Set the number of rows and columns for the grid
+num_rows <- 4
+num_cols <- 5
+# Create a new blank plot
+plot.new()
+# Set up the grid layout
+par(mfrow = c(num_rows, num_cols), mar = c(2, 2, 2, 2))
+
+for (i in 1:max_iterations) {
+  gene <- var_trend_age_genes[i]
+  
+  # Subset the dataset for the specific geneID
+  gene_data <- gene_data_list[[as.character(gene)]]
+  
+  # Compute the variance of gene expression for each age
+  variance_by_age <- aggregate(transcription ~ age, data = gene_data, FUN = var)
+  
+  # Plot the variance by age
+  plot(variance_by_age$age, log(variance_by_age$transcription), type = "b", 
+       xlab = "Age", ylab = "Gene Expression Variance",
+       main = paste0("Gene ID:", gene))
+}
+
+# Reset the plot layout
+par(mfrow = c(1, 1))
+```
+
+
+### Linear regression modeling
+
+**Model assumption**
+
+At the within-gene level, the model describes the distribution of gene expression vectors for each gene at different ages. This level captures the individual variation within each gene and accounts for the measurement noise and biological variability.
+
+For the i-th age, the model assumes a multivariate normal distribution for the gene expression vectors:
+
+$$
+\mathbf{y}_{i} \sim MVN(\boldsymbol{\mu}_{i}, \boldsymbol{\Sigma}_{i})
+$$
+
+- $\mathbf{y}_{ij}$ represents the gene expression vector at the i-th age, containing the expression values across all genes.
+- $\boldsymbol{\mu}_{i}$ represents the mean expression vector at i-th age.
+- $\boldsymbol{\Sigma}_{i}$ represents the variance-covariance matrix of gene expression at the i-th age.
+
+**Model for Means**
+
+At this level, the model captures the shared characteristics and systematic variation among genes, considering the effect of both gene-specific intercepts, strain-specific intercepts, and the change in expression mean per unit change in age.
+
+Notice that $\mu_{ij}$ is the j-th entry in the mean vector $\boldsymbol{\mu}_i$. The mean expression value $\mu_{ij}$ for gene j at the i-th age and strains is modeled as:
+
+$$
+\mu_{ij} = \alpha_{mean,j} + \beta_{age,j} \cdot \text{age}_i + \sum_{k=1}^{N_{\text{strain}}}\alpha_{j,\text{strain_k}} \cdot \boldsymbol{1_{\text{strain_k}}}
+$$
+
+Where:
+
+- $\mu_{ij}$ is the mean expression value of the j-th gene at the i-th age.
+- $\alpha_{mean,j}$ is the intercept term, representing the overall mean expression level across ages and strains for j-th gene.
+- $\beta_{age,j}$ is the coefficient of the 'age' variable, representing the change in mean expression of j-th gene per unit change in age.
+- $N_{\text{strain}}$ is the total number of strains.
+- $\alpha_{j,\text{strain_k}}$ is the coefficients associated with the k-th strain, which represents the fixed effect of the k-th strain for j-th gene.
+- $\boldsymbol{1_{\text{strain_k}}}$ is the indicator variable for the k-th strain.
+
+This model captures how the mean expression value of each gene varies with age while accounting for the effects of different strains. The coefficients $\alpha_{i,\text{strain_k}},\ k=1,2,...,N_{\text{strain}}$ quantify how the mean expression levels change for strains.
+
+**Modeling the Variance-Covariance Matrix ($\boldsymbol{\Sigma}_i$):**
+
+In this part we separate the covariance matrix into two parts: the variance diagonal matrix and the correlation coefficient matrix. For convenience, we analyze these two parts separately.
+
+$$
+\boldsymbol{\Sigma}_{i} = \text{diag}(\boldsymbol{\Delta}_{i}) \cdot \boldsymbol{\Omega}_{i}
+$$
+
+where:
+
+- $\text{diag}(\boldsymbol{\Delta}_{i})$ is a diagonal matrix with the vector $\boldsymbol{\delta}_{i}$ containing the variances of gene expression at the i-th age for each gene.
+
+- $\boldsymbol{\Omega}_{i}$ is the correlation matrix at the i-th age.
+
+**Modeling the Variance of Gene Expression ($\delta_{ij}$):**
+
+$\delta_{ij}$ represents the variance of gene expression for the j-th gene at the i-th age, which is the jj-th entry of the diagonal matrix $\text{diag}(\boldsymbol{\Delta}_{i})$. To model the variance of gene expression for each gene over age, we assume a linear relationship with age:
+
+$$
+\delta_{ij} = \alpha_{var,j} + \beta_{\text{age_var_j}} \cdot \text{age}_i + \sum_{k=1}^{N_{\text{strain}}}\alpha_{var,j,\text{strain_k}} \cdot \boldsymbol{1_{\text{strain_k}}}
+$$
+
+where:
+
+- $\delta_{ij}$ represents the variance of gene expression for the j-th gene at the i-th age.
+- $\alpha_{var,j}$ represents the gene-specific intercept for the j-th gene.
+- $\beta_{\text{age_var_j}}$ represents the coefficient capturing the change in log-variance per unit change in age.
+- $N_{\text{strain}}$ is the total number of strains.
+- $\alpha_{var,j,\text{strain_k}}$ is the coefficients associated with the k-th strain, which represents the fixed effect of the k-th strain for j-th gene.
+- $\boldsymbol{1_{\text{strain_k}}}$ is the indicator variable for the k-th strain.
+
+**Modeling the Correlation of Gene Expression ($\omega_{i,jk}$):**
+
+$\omega_{i,jk}$ is the jk-th entry of the correlation matrix at the i-th age $\boldsymbol{\Omega}_{i}$, which represents the correlation coefficient between the gene expression values of the j-th gene and the k-th gene at i-th age.
+
+To analyze the change of correlations over age, we can assume a linear relationship between the elements of the correlation matrix $\boldsymbol{\Omega}_{i}$ and the age variable $\text{age}_i$. Specifically, we can model the correlation coefficients $\omega_{i,jk}$ as follows:
+
+$$
+\omega_{i,jk} = \alpha_{cor,jk} + \beta_{\text{age_cor_jk}} \cdot \text{age}_i + \sum_{l=1}^{N_{\text{strain}}}\alpha_{cor,jk,\text{strain_l}} \cdot \boldsymbol{1_{\text{strain_l}}}
+$$
+
+where:
+
+- $\omega_{i,jk}$ represents the correlation coefficient between the gene expression values of the k-th gene and the k-th gene at the i-th age.
+- $\alpha_{cor,jk}$ represents the gene-pair-specific intercept for the j-th gene and k-th gene.
+- $\beta_{\text{age_cor_jk}}$ represents the coefficient capturing the change in correlation per unit change in age.
+- $N_{\text{strain}}$ is the total number of strains.
+- $\alpha_{cor,jk,\text{strain_l}}$ is the coefficients associated with the l-th strain, which represents the fixed effect of the l-th strain for the gene pair(j-th gene and k-th gene).
+- $\boldsymbol{1_{\text{strain_l}}}$ is the indicator variable for the l-th strain.
+
+In the below modeling approach, we are utilizing individual observations from gene expression data to fit models. Unlike the approaches that relied on estimated means, this method directly leverages the raw data points, avoiding potential information loss from different replicates. 
+
+```{r}
+library(dplyr)
+
+# Group the mean_expression by geneID
+expression_mean_model <- dataset %>%
+  group_by(geneID) %>%
+  do(mod = lm(transcription ~ age + factor(strainID), data = .))
+
+# Extract coefficients for each gene
+expression_mean_results <- expression_mean_model %>%
+  mutate(
+    alpha_gene = coef(mod)[1],
+    beta_age = coef(mod)[2]
+  ) %>%
+  select(geneID, alpha_gene, beta_age)
+
+# Group by age and geneID and estimate the variance of gene expression
+variance_gene <- dataset %>%
+  group_by(age, geneID, strainID) %>%
+  summarize(variance_expression = var(transcription))
+
+#'variance_gene' is the dataframe with columns: age, geneID, variance_expression
+variance_gene_model <- variance_gene %>%
+  group_by(geneID) %>%
+  do(mod = lm(variance_expression ~ age + factor(strainID), data = .))
+
+# Extract alpha_j (intercept), beta_age_var_j (slope), and p-value coefficients
+variance_model_result <- variance_gene_model %>%
+  mutate(alpha_j = coef(mod)[1], beta_age_var_j = coef(mod)[2], p_value = summary(mod)$coefficients[2, 4]) %>%
+  select(geneID, alpha_j, beta_age_var_j, p_value)
+```
+
+Specially, I did some inference work about our interested parameter $\beta_{\text{age_var_j}}$, which is the slope between variance and age. The parameter $\beta_{\text{age_var_j}}$ is a crucial factor for understanding how the variance of gene expression changes with age in mosquitoes. The value provides insights into the gene expression variability with age. 
+
+- If $\beta_{\text{age_var_j}}$ is positive and significantly different from zero, it suggests that the expression variability among genes increases as mosquitoes age. This may indicate increased cellular heterogeneity during the aging process.
+
+- If $\beta_{\text{age_var_j}}$ is negative and significantly different from zero, it suggests that the expression variability among genes decreases with age. This might indicate a more regulated gene expression pattern during aging.
+
+- If $\beta_{\text{age_var_j}}$ is close to zero and not significantly different from zero, it suggests that gene expression variability remains relatively stable across ages, indicating a consistent regulatory environment for gene expression.
+
+```{r,warning=FALSE}
+# Calculate the mean and standard deviation of beta_age_var_j
+mean_slope <- mean(variance_model_result$beta_age_var_j)
+sd_slope <- sd(variance_model_result$beta_age_var_j)
+
+# Set a Z-score threshold for outlier detection (e.g., Z > 3 for extreme outliers)
+z_threshold <- 3
+
+# Calculate Z-scores for each gene's slope
+variance_model_result <- variance_model_result %>%
+  mutate(z_score = (beta_age_var_j - mean_slope) / sd_slope)
+
+# Identify geneIDs as outliers based on the Z-score threshold
+outliers <- variance_model_result %>%
+  filter(abs(z_score) > z_threshold)
+library(ggplot2)
+# Create a histogram for the overall distribution
+histogram <- ggplot(data = variance_model_result, aes(x = beta_age_var_j)) +
+  geom_histogram(binwidth = 0.01, fill = "blue", alpha = 0.7) +
+  labs(title = "Histogram of Slopes for Age Overall",
+       y = "Frequency") +
+  scale_x_continuous(breaks = seq(-0.1, 0.1, by = 0.05),limits = c(-0.12,0.12))
+
+# Create a histogram for the outliers
+histogram_outliers <- ggplot(data = outliers, aes(x = beta_age_var_j)) +
+  geom_histogram(binwidth = 0.01, fill = "red", alpha = 0.7) +
+  labs(title = "Histogram for Outliers",
+       y = "Frequency")
+
+# Display both histograms side by side
+library(gridExtra)
+grid.arrange(histogram, histogram_outliers, ncol = 2)
+```
+
+
+**Inference combining with Gene Ontology Analysis**
+
+Here's a dataset generated and downloaded from the [Vectorbase](https://vectorbase.org/vectorbase/app/search?q=Anopheles%20gambiae%20PEST&documentType=gene&organisms=Anopheles%20gambiae%20PEST), which can provide us information about the genes' function and help us explore more about the expression pattern. 
+
+```{r}
+gene_function_df <- read.csv("https://uwmadison.box.com/shared/static/5ygx55ktztujtann10n6k747njgf4d0j.csv")
+head(gene_function_df)
+```
+
+According to the description in the website, the columns of the dataset refer to various aspects of gene descriptions and annotations:
+
+1. **Transcript Product Description:** This typically refers to the description of a transcript, which is a specific RNA molecule produced from a gene. The "Transcript Product Description" provides information about the features of a transcript, such as its start and end points, coding regions, untranslated regions, splice variants, and functional information. It helps researchers understand the role of a particular RNA transcript.
+
+2. **Product Description:** In the context of gene annotation, the "Product Description" generally refers to a description of the protein product that a gene codes for. It includes information about the protein's function, domains, motifs, and any other relevant details. The "Product Description" is important for understanding the biological role of the gene and the protein it produces.
+
+3. **Gene Type:** Gene Type here refers to the classification or categorization of genes based on their characteristics and functions. Gene type provides information about the role or category of a specific gene within the genome. 
+
+In this dataset, we have three types of Gene Type: Protein-Coding Genes, Non-Coding RNA Genes, and Pseudogenes. Protein-Coding Genes are genes that encode proteins. They are transcribed into messenger RNA (mRNA) and subsequently translated into a functional protein. Protein-coding genes are often associated with specific functions in the cell or organism. Non-Coding RNA Genes do not code for proteins but instead produce functional RNA molecules. This category includes various types of non-coding RNAs, such as ribosomal RNA (rRNA), transfer RNA (tRNA), small nuclear RNA (snRNA), microRNA (miRNA), long non-coding RNA (lncRNA), and others. Pseudogenes are gene-like sequences that have lost their ability to produce functional proteins due to mutations or other factors. They are often considered non-functional remnants of once-active genes.
+
+Next, we want to explore the gene’s function in our interesting subsets (“increasing_var_genes” and “decreasing_var_genes”) using “gene_function_df”.
+
+```{r}
+# Group by age and geneID and estimate the variance of gene expression
+variance_gene <- dataset %>%
+  group_by(age, geneID, strainID) %>%
+  summarize(variance_expression = var(transcription))
+
+#'variance_gene' is the dataframe with columns: age, geneID, variance_expression
+variance_gene_model <- variance_gene %>%
+  group_by(geneID) %>%
+  do(mod = lm(variance_expression ~ age + factor(strainID), data = .))
+
+# Extract alpha_j (intercept), beta_age_var_j (slope), and p-value coefficients
+variance_model_result <- variance_gene_model %>%
+  mutate(
+    alpha_gene = coef(mod)[1],                          # Intercept for each gene
+    beta_age = coef(mod)[2],                            # Coefficient for age for each gene
+    beta_age_p = summary(mod)$coefficients[2, 4],       # P-value for the coefficient of age for each gene
+    beta_age_ci_lower = confint(mod, "age")[1],         # Lower bound of confidence interval for beta_age
+    beta_age_ci_upper = confint(mod, "age")[2]          # Upper bound of confidence interval for beta_age
+  ) %>%
+  select(geneID, alpha_gene, beta_age, beta_age_p, beta_age_ci_lower, beta_age_ci_upper)
+
+# Filter genes with increasing expression in variance(positive beta_age)
+increasing_var_genes <- (variance_model_result %>%
+  filter(beta_age_ci_lower > 0))$geneID
+increasing_var_genes <- gene_function_df %>%
+  filter(Gene.ID %in% increasing_var_genes) %>%
+  select(Gene.ID, Product.Description)
+
+# Filter genes with decreasing expression in variance(negative beta_age)
+decreasing_var_genes <- (variance_model_result %>%
+  filter(beta_age_ci_upper < 0))$geneID
+decreasing_var_genes <- gene_function_df %>%
+  filter(Gene.ID %in% decreasing_var_genes) %>%
+  select(Gene.ID, Product.Description)
+```
+
+
+```{r}
+library(ggplot2)
+genes_function_count <- gene_function_df %>%
+  filter(Gene.ID %in% unique(dataset$geneID)) %>%
+  select(Gene.ID, Product.Description)
+genes_function_count$Modified_Product.Description <- gsub(" [0-9]+$", "", genes_function_count$Product.Description)
+genes_function_count <- genes_function_count %>%
+  group_by(Modified_Product.Description) %>%
+  summarize(Count = n())
+
+# Remove numbers at the end of Product.Description and group by modified Product.Description
+increasing_var_genes$Modified_Product.Description <- gsub(" [0-9]+$", "", increasing_var_genes$Product.Description)
+decreasing_var_genes$Modified_Product.Description <- gsub(" [0-9]+$", "", decreasing_var_genes$Product.Description)
+
+# Group the data by the modified Product.Description
+grouped_increasing_var_genes <- increasing_var_genes %>%
+  group_by(Modified_Product.Description) %>%
+  summarize(Count = n())
+grouped_increasing_var_genes <- na.omit(merge(grouped_increasing_var_genes, genes_function_count, by = "Modified_Product.Description", all = TRUE)) 
+grouped_increasing_var_genes <- grouped_increasing_var_genes %>% arrange(desc(Count.x))
+colnames(grouped_increasing_var_genes) <- c("Modified_Product.Description","increasing_var_genes_count","total_count")
+
+grouped_decreasing_var_genes <- decreasing_var_genes %>%
+  group_by(Modified_Product.Description) %>%
+  summarize(Count = n())
+grouped_decreasing_var_genes <- na.omit(merge(grouped_decreasing_var_genes, genes_function_count, by = "Modified_Product.Description", all = TRUE)) 
+grouped_decreasing_var_genes <- grouped_decreasing_var_genes %>% arrange(desc(Count.x))
+colnames(grouped_decreasing_var_genes) <- c("Modified_Product.Description","decreasing_var_genes_count","total_count")
+
+
+```
+
+
+```{r}
+library(ggplot2)
+library(reshape2)
+# Plot for increasing variancegenes
+ggplot(melt(grouped_increasing_var_genes[2:15,],id = "Modified_Product.Description")) +
+  geom_bar(aes(x = Modified_Product.Description, y = value, fill = variable), position = "dodge", stat = "identity")  +
+  labs(title = "Distribution of Gene Functions in Increasing Variance Genes") +
+  xlab("Product Description") +
+  ylab("Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave(filename="in.png")
+
+# Plot for decreasing variance genes
+ggplot(melt(grouped_decreasing_var_genes[2:15,],id = "Modified_Product.Description")) +
+  geom_bar(aes(x = Modified_Product.Description, y = value, fill = variable), position = "dodge", stat = "identity")  +
+  labs(title = "Distribution of Gene Functions in Decreasing Variance Genes") +
+  xlab("Product Description") +
+  ylab("Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave(filename = "de.png")
+```
+
+
+In summary, the plots we've created provide information for understanding the distribution of gene functions in different subsets of genes.Further, we can explore the subset of genes (e.g, genes with increasing variance), especially those whose functions have a high count in the analysis. Also investigate whether genes are associated with specific biological processes, pathways, or functions.
+
+In the end of the linear regression model part, I'd like to talk about some limitations of this model. First, I separate subsets and fit the model for each gene, which may result in information loss and influence the power of estimation. I didn't solve this problem in R, instead, I found appropriate package and functions in Python and fit the model using the whole dataset. I have upload the Python code to Github named "Modeling.ipynb" and "Modeling.html". Second, it's hard for us to make deeper interpretations under the model structure.
+
+### An intro to latent variable model
+
+The describtion file of this latent variable model named "latent_var_model__12apr23.pdf", finished by Changde, Mark, and Arbel. In this part, I made some tryings to incorporate the factor model in theory and practice.
+
+First, we observed the expression of a set of genes in several lines at several ages. In turn, these expression levels depend linearly on the expression of a set of $n_F$ unseen transcription factors. We write the expected expression of gene i in line j at age $\tau_t$ as $$y_{ijt} = a_i + \sum_{m=1}^{n_F} b_{im}f_{jtm}.
+$$
+
+Here $f_{jtm}$ is the expression level of transcription factor m in line j at age $\tau_t$. For each transcription factor, it can be written as 
+$$f_{jtm} = \alpha_{jm} + \beta_{jm}\tau_t
+$$
+
+In practice, we can fix $n_F$ and choose $n_F$ genes with increasing means over age, then use their linear regression results as the initial value for transcription factors.
+
+Then we can write out the observed expression $x_{ijkt}$, k denotes the replicates ID.
+$$x_{ijkt} = y_{ijt} + \epsilon_{ijkt}
+$$
+
+The residual $\epsilon_{ijkt}$ is normally distributed. Then we can use MLE to estimate parameters:
+
+$$L = \Pi_{ijkt} N(\frac{x_{ijkt} - y_{ijt}}{Sd(\epsilon_{ijkt})})$$
+
+where $N()$ is the pdf of standard normal distribution. Recall the definition of pdf, we can convert this to an optimization problem:
+
+$$min_{b_{im},\alpha_{jm},\beta_{jm},var(\epsilon_{ijkt})}\sum_{ijkt} \frac{(x_{ijkt} - y_{ijt})^2}{Var(\epsilon_{ijkt})}$$
+
+Specifically, $\epsilon_{ijkt} = (a_{ik}+b_{ik}\tau_t) + (a_{ij}+b{ij}\tau_t)$.
+This part is really tricky since there are many unknown parameters. One possible way is use given prior $y_{ijt}$ to estimate $Var(\epsilon_{ijkt})$, then fix the $Var(\epsilon_{ijkt})$, treat $y_{ijt}$ as the variable and solve this weighted least squared question. And repeat the process until the estimators converge.
+
+Another thing to consider is the interpretation of the model. Assume we get the parameters we want, here are two ways to tell whether there are increasing variance over age. First is to check if there are increasing variance between replicates within lines, $Var(\bar{X_{ijt}})$, $\bar{X_{ijt}}$ is the mean across replicates for gene i in line j at time $\tau_t$; Second is to check if there are increasing variance between lines, $Var(\bar{X_{it}})$, which is the variance across lines for gene i at time t after averaging the expression over replicates.
+
